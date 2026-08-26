@@ -73,6 +73,11 @@ binary_sensor:
         max_length: 350ms
         then:
           - lambda: |-
+              // Check if button is locked (Shabbos/Yom Tov)
+              if (!id(enable_button_1).state) {
+                ESP_LOGD("button", "Button locked - ignoring click");
+                return;
+              }
               static uint32_t last_click = 0;
               static int count = 0;
               uint32_t now = millis();
@@ -81,13 +86,11 @@ binary_sensor:
               if (count >= 3) {
                 id(inverted_shabbos_mode).toggle();
                 count = 0;
-                // triple-blink LED as feedback
                 for (int i = 0; i < 3; i++) {
                   id(built_in_led).turn_on(); delay(150);
                   id(built_in_led).turn_off(); delay(150);
                 }
               } else if (count == 1) {
-                // wait — if no more clicks come, toggle relay
                 delay(500);
                 if (count == 1) {
                   id(relay_1).toggle();

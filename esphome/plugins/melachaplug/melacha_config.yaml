@@ -16,6 +16,9 @@ esphome:
         - switch.turn_on: shabbos_mode
     - priority: 600
       then:
+        - globals.set:
+            id: config_callbacks_ready
+            value: 'true'
         - lambda: 'MelachaPlugNTP::configureFromSaved();'
 
 # frequency of data flushed to the flash
@@ -79,6 +82,10 @@ sun:
 
 # variables publicly (internally) available
 globals:
+  - id: config_callbacks_ready
+    type: bool
+    restore_value: no
+    initial_value: "false"
   - id: hdate_valid
     type: bool
     restore_value: no

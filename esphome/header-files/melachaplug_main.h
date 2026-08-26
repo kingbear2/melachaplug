@@ -17,6 +17,10 @@ or connect to: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 
 //#include "../config/esphome/header-files/hebrewcalender_melachaplug.h"
 #include "esphome.h"
+// ESP32 needs explicit HTTPClient include for location detection
+#ifndef ESP8266
+#include <HTTPClient.h>
+#endif
 using namespace esphome;
 using namespace time;
 
@@ -168,9 +172,11 @@ namespace MelachaPlug  {
     }
 
     void setAlterRebbeZmanim() {
-        // reverts to default Alter Rebbe zmanin
+        // Alter Rebbe: shkiah at -0.833°, tzeit at -8.5°
         id(deg_shabbos_starts).publish_state(-0.833);
         id(deg_shabbos_ends).publish_state(-8.5);
+        id(min_offset_start).publish_state(-30);
+        id(min_offset_end).publish_state(0);
     }
 
     void setRabbiMosheZmanim() {
@@ -265,9 +271,13 @@ void applyTimezone(const std::string &tz_posix) {
 namespace LocationExtras  {
 
     void detectLocation() {
-        WiFiClient wifiClient;
         HTTPClient http;
+#ifdef ESP8266
+        WiFiClient wifiClient;
         http.begin(wifiClient, "http://ip-api.com/json/?fields=status,regionName,city,zip,lat,lon,timezone");
+#else
+        http.begin("http://ip-api.com/json/?fields=status,regionName,city,zip,lat,lon,timezone");
+#endif
         int httpResponseCode = http.GET();
         std::string payload = http.getString().c_str();
         ESP_LOGD("detectLocation", "Current Location: %s", payload.c_str());
