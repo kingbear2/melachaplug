@@ -65,9 +65,57 @@ binary_sensor:
       number: ${button_1_gpio}
       mode: INPUT_PULLUP
       allow_other_uses: true
-      inverted: true
+    inverted: true
     filters:
       - delayed_on: 10ms
     on_click:
-      then:
-        - switch.toggle: relay_1
+      - min_length: 10ms
+        max_length: 350ms
+        then:
+          - lambda: |-
+              static uint32_t last_click_time = 0;
+              static int click_count = 0;
+              static bool pending_single = false;
+              uint32_t now = millis();
+              if (now - last_click_time < 2000) {
+                click_count++;
+              } else {
+                click_count = 1;
+              }
+              last_click_time = now;
+              ESP_LOGD("button", "Click count: %d", click_count);
+              if (click_count >= 3) {
+                // Triple click: toggle invert mode
+                ESP_LOGD("button", "Triple click - toggling invert mode");
+                id(inverted_shabbos_mode).toggle();
+                click_count = 0;
+                pending_single = false;
+                // Signal with LED triple-blink
+                id(built_in_led).turn_on();
+                delay(150);
+                id(built_in_led).turn_off();
+                delay(150);
+                id(built_in_led).turn_on();
+                delay(150);
+                id(built_in_led).turn_off();
+                delay(150);
+                id(built_in_led).turn_on();
+                delay(150);
+                id(built_in_led).turn_off();
+              } else if (click_count == 1) {
+                // Single click: delay the relay toggle to see if more clicks come
+                pending_single = true;
+              } else if (click_count == 2) {
+                // Double click: cancel single click action
+                pending_single = false;
+              }
+          - delay: 500ms
+          - lambda: |-
+              static int click_count = 0;
+              static bool pending_single = false;
+              if (pending_single) {
+                ESP_LOGD("button", "Single click confirmed - toggling relay");
+                id(relay_1).toggle();
+                pending_single = false;
+              }
+              click_count = 0;

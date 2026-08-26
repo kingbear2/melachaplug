@@ -56,7 +56,3 @@ button:
     name: 15 Detect Location
     on_press:
       - lambda: 'LocationExtras::detectLocation();'
-  - platform: template
-    name: 16 Revert to Default Location
-    on_press:
-      - lambda: 'LocationExtras::revertToDefaultLocation(${latitude}, ${longitude});'

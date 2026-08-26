@@ -168,9 +168,21 @@ namespace MelachaPlug  {
     }
 
     void setAlterRebbeZmanim() {
-        // reverts to default Alter Rebbe zmanin
+        // Alter Rebbe: shkiah at -0.833°, tzeit at -8.5°
         id(deg_shabbos_starts).publish_state(-0.833);
         id(deg_shabbos_ends).publish_state(-8.5);
+        id(min_offset_start).publish_state(-30);
+        id(min_offset_end).publish_state(0);
+    }
+
+    void setRabbiMosheZmanim() {
+        // R' Moshe Feinstein (Igros Moshe OC 4:62):
+        // Shabbos ends 50 minutes after sunset (not degree-based)
+        // Shabbos starts at standard sunset (-0.833°)
+        id(deg_shabbos_starts).publish_state(-0.833);
+        id(deg_shabbos_ends).publish_state(-0.833);  // use sunset as base
+        id(min_offset_start).publish_state(-30);     // candle lighting 18 min before + buffer
+        id(min_offset_end).publish_state(50);        // 50 minutes after sunset
     }
 
     void updateTextSensors() {
@@ -204,74 +216,226 @@ namespace MelachaPlug  {
         MelachaPlug::updateHdate();           // update the hebrew date
         MelachaPlug::setShabbosMode();        // checks if issur and turns on Shabbos mode
         MelachaPlug::publishHebrewDay();      // update the hebrew day text sensor
-        MelachaPlug::updateTextSensors();
+        MelachaPlug::updateTextSensors();     // update sunset/tzeit sensors
+        MelachaPlug::updateNextToggleTimes(); // update next relay on/off times
+    }
+
+    void updateNextToggleTimes() {
+        // Compute the next time the relay will turn ON and OFF
+        // based on current Shabbos mode and invert mode
+        if (id(time_valid) == false) return;
+
+        esphome::ESPTime now = id(sntp_time).now();
+        hdate temp_hdate = convertDate(now.to_c_tm());
+        bool currently_assur = isassurbemelachah(temp_hdate);
+
+        // Find next OFF time (when relay turns off = when Shabbos mode turns ON)
+        // and next ON time (when relay turns on = when Shabbos mode turns OFF)
+        // In default mode: ON time = weekday start, OFF time = Shabbos start
+        // In inverted mode: ON time = Shabbos start, OFF time = weekday start
+
+        time_t next_on = 0;
+        time_t next_off = 0;
+
+        if (currently_assur) {
+            // Currently Shabbos/Yom Tov
+            // Next OFF (relay off) is right now (or was at shabbos start)
+            // Next ON (relay on) is when Shabbos ends
+            next_on = MelachaPlug::getNextShabbosEndTime(temp_hdate);
+            // Find next Shabbos start after that for next OFF
+            hdate next_hdate = temp_hdate;
+            while (isassurbemelachah(next_hdate)) {
+                hdateaddday(&next_hdate, 1);
+            }
+            // now next_hdate is the first weekday — find the next Shabbos after it
+            while (isassurbemelachah(next_hdate) == false) {
+                hdateaddday(&next_hdate, 1);
+            }
+            next_off = MelachaPlug::getShabbosStartTime(next_hdate);
+        } else {
+            // Currently weekday
+            // Next OFF (relay off) is when Shabbos starts
+            next_off = MelachaPlug::getNextShabbosStartTime(temp_hdate);
+            // Next ON (relay on) is when that Shabbos ends
+            hdate next_hdate = temp_hdate;
+            while (isassurbemelachah(next_hdate) == false) {
+                hdateaddday(&next_hdate, 1);
+            }
+            next_on = MelachaPlug::getNextShabbosEndTime(next_hdate);
+        }
+
+        if (next_on > 0) {
+            esphome::ESPTime on_time = esphome::ESPTime::from_epoch_local(next_on);
+            id(next_relay_on_time).publish_state(on_time.strftime("%a, %b %e, %l:%M %p"));
+        }
+        if (next_off > 0) {
+            esphome::ESPTime off_time = esphome::ESPTime::from_epoch_local(next_off);
+            id(next_relay_off_time).publish_state(off_time.strftime("%a, %b %e, %l:%M %p"));
+        }
+    }
+
+    time_t getShabbosStartTime(hdate &hd) {
+        // Get sunset time for the start of Shabbos/Yom Tov for this hdate
+        esphome::ESPTime date = id(sntp_time).now();
+        // Convert hdate to gregorian to get the right date
+        struct tm greg = hdategregorian(hd);
+        date.set_datetime(greg);
+        date.hour = date.minute = date.second = 0;
+        date.recalc_timestamp_utc();
+
+        if (id(early_shabbos).state == true) {
+            return getPlagTimeForDate(date);
+        }
+
+        auto sunset = id(mysun).sunset(date, id(deg_shabbos_starts).state);
+        if (sunset) {
+            return sunset->timestamp + (int)(id(min_offset_start).state * 60);
+        }
+        return 0;
+    }
+
+    time_t getNextShabbosStartTime(hdate &hd) {
+        // Find next day that is assur and return its start time
+        hdate temp = hd;
+        int max_days = 8; // max a week away
+        while (isassurbemelachah(temp) == false && max_days > 0) {
+            hdateaddday(&temp, 1);
+            max_days--;
+        }
+        if (isassurbemelachah(temp)) {
+            return getShabbosStartTime(temp);
+        }
+        return 0;
+    }
+
+    time_t getNextShabbosEndTime(hdate &hd) {
+        // Find the next day that is NOT assur (after current Shabbos/YT) and return the end time
+        hdate temp = hd;
+        int max_days = 14; // max 2 weeks (Yom Tov can be long)
+        while (isassurbemelachah(temp) && max_days > 0) {
+            hdateaddday(&temp, 1);
+            max_days--;
+        }
+        if (isassurbemelachah(temp) == false) {
+            // temp is now the first weekday — the end time is sunset of the previous day
+            // which is the last day of Shabbos/YT at the end degree
+            hdateaddday(&temp, -1);
+            return getShabbosEndTime(temp);
+        }
+        return 0;
+    }
+
+    time_t getShabbosEndTime(hdate &hd) {
+        // Get sunset time for the end of Shabbos/Yom Tov for this hdate
+        struct tm greg = hdategregorian(hd);
+        esphome::ESPTime date = esphome::ESPTime::from_epoch_local(mktime(&greg));
+        date.hour = date.minute = date.second = 0;
+        date.recalc_timestamp_utc();
+
+        auto sunset = id(mysun).sunset(date, id(deg_shabbos_ends).state);
+        if (sunset) {
+            return sunset->timestamp + (int)(id(min_offset_end).state * 60);
+        }
+        return 0;
+    }
+
+    time_t getPlagTimeForDate(esphome::ESPTime &date) {
+        auto sunrise = id(mysun).sunrise(date, -1.583);
+        auto sunset = id(mysun).sunset(date, -1.583);
+        if (!sunrise || !sunset) return 0;
+        float shaahzmanis = (sunset->timestamp - sunrise->timestamp) / 12;
+        time_t plag = sunrise->timestamp + (shaahzmanis * 10.75);
+        return plag + (int)(id(min_offset_start).state * 60);
     }
 } // namespace MelachaPlug
 
+
+// Helper: extract a JSON string value by key (handles both "key":"value" and "key":value)
+std::string jsonGetString(const std::string &json, const std::string &key) {
+    std::string search = "\"" + key + "\":\"";
+    int start = json.find(search);
+    if (start >= 0) {
+        start += search.length();
+        int end = json.find("\"", start);
+        if (end >= 0) return json.substr(start, end - start);
+    }
+    // try numeric/null value
+    search = "\"" + key + "\":";
+    start = json.find(search);
+    if (start >= 0) {
+        start += search.length();
+        int end = json.find_first_of(",}", start);
+        if (end >= 0) return json.substr(start, end - start);
+    }
+    return "";
+}
+
+// Map common timezone strings to POSIX TZ format for setenv
+// POSIX TZ is reversed from IANA (sign is flipped): EST5 = UTC-5
+std::string ianaToPosixTZ(const std::string &iana) {
+    if (iana == "America/New_York")    return "EST5EDT,M3.2.0,M11.1.0";
+    if (iana == "America/Chicago")     return "CST6CDT,M3.2.0,M11.1.0";
+    if (iana == "America/Denver")      return "MST7MDT,M3.2.0,M11.1.0";
+    if (iana == "America/Los_Angeles") return "PST8PDT,M3.2.0,M11.1.0";
+    if (iana == "America/Phoenix")     return "MST7";              // no DST
+    if (iana == "America/Indiana/Indianapolis") return "EST5";    // no DST
+    if (iana == "Pacific/Honolulu")    return "HST10";             // no DST
+    if (iana == "America/Anchorage")   return "AKST9AKDT,M3.2.0,M11.1.0";
+    if (iana == "Asia/Jerusalem")      return "IST-2IDT,M3.4.4,M10.4.4";
+    if (iana == "Europe/London")       return "GMT0BST,M3.5.0,M10.5.0";
+    if (iana == "Europe/Paris")        return "CET-1CEST,M3.5.0,M10.5.0";
+    if (iana == "Australia/Sydney")    return "AEST-10AEDT,M10.1.0,M4.1.0";
+    if (iana == "America/Toronto")     return "EST5EDT,M3.2.0,M11.1.0";
+    if (iana == "America/Vancouver")   return "PST8PDT,M3.2.0,M11.1.0";
+    // fallback: return as-is and hope ESPHome's tzset handles it
+    return iana;
+}
+
+void applyTimezone(const std::string &tz_posix) {
+    ESP_LOGD("applyTimezone", "Setting TZ to: %s", tz_posix.c_str());
+    setenv("TZ", tz_posix.c_str(), 1);
+    tzset();
+    id(current_timezone).publish_state(tz_posix);
+}
 
 namespace LocationExtras  {
 
     void detectLocation() {
         WiFiClient wifiClient;
         HTTPClient http;
-        http.begin(wifiClient, "http://ip-api.com/json/?fields=status,regionName,city,zip,lat,lon"); // API from http://ip-api.com/
+        http.begin(wifiClient, "http://ip-api.com/json/?fields=status,regionName,city,zip,lat,lon,timezone"); // API from http://ip-api.com/
         int httpResponseCode = http.GET();
         std::string payload = http.getString().c_str();
-        ESP_LOGD("detectLocation", "Curernt Location: %s", payload.c_str());
+        ESP_LOGD("detectLocation", "Current Location: %s", payload.c_str());
         http.end();
 
-        int start = payload.find("status") + 9;
-        int end = payload.find(",", start) - 1;
-        std::string status = payload.substr(start, end - start);
+        std::string status = jsonGetString(payload, "status");
 
         if(status == "success") {
-            start = payload.find("regionName") + 13;
-            end = payload.find(",", start) - 1;
-            std::string state = payload.substr(start, end - start);
+            std::string state = jsonGetString(payload, "regionName");
+            std::string city = jsonGetString(payload, "city");
+            std::string zip = jsonGetString(payload, "zip");
+            std::string lat = jsonGetString(payload, "lat");
+            std::string lon = jsonGetString(payload, "lon");
+            std::string tz_iana = jsonGetString(payload, "timezone");
 
-            start = payload.find("city") + 7;
-            end = payload.find(",", start) - 1;
-            std::string city = payload.substr(start, end - start);
-
-            start = payload.find("zip") + 6;
-            end = payload.find(",", start) - 1;
-            std::string zip = payload.substr(start, end - start);
-
-            start = payload.find("lat") + 5;
-            end = payload.find(",", start);
-            std::string lat = payload.substr(start, end - start);
-            // float lat = parse_float(payload.substr(start, end - start)).value();
-
-            start = payload.find("lon") + 5;
-            end = payload.find("}", start); // it's the end of the json therefor look for '}'
-            std::string lon = payload.substr(start, end - start);
-            // float lon = parse_float(payload.substr(start, end - start)).value();
-
-            ESP_LOGD("detectLocation", "status: %s, state: %s, city: %s, zip: %s, lat: %s, lon: %s", status.c_str(), state.c_str(), city.c_str(), zip.c_str(), lat.c_str(), lon.c_str());
+            ESP_LOGD("detectLocation", "status: %s, state: %s, city: %s, zip: %s, lat: %s, lon: %s, tz: %s",
+                     status.c_str(), state.c_str(), city.c_str(), zip.c_str(), lat.c_str(), lon.c_str(), tz_iana.c_str());
             id(latitude_number).publish_state(atof(lat.c_str()));
             id(longitude_number).publish_state(atof(lon.c_str()));
             id(location_info).publish_state("Auto detected: " + city + ", " + state + " " + zip);
+
+            // Auto-set timezone from detected location
+            if (!tz_iana.empty()) {
+                std::string tz_posix = ianaToPosixTZ(tz_iana);
+                ESP_LOGD("detectLocation", "Auto-detected timezone: %s -> POSIX: %s", tz_iana.c_str(), tz_posix.c_str());
+                applyTimezone(tz_posix);
+                id(sntp_time).update(); // re-sync time with new timezone
+            }
         } else {
             id(location_info).publish_state("Failed to get your location");
             ESP_LOGD("detectLocation", "Failed to get your location");
         }
-    }
-
-    void revertToDefaultLocation(double latitude, double longitude) {
-        // reverts to default location
-        ESP_LOGD("revertToDefaultLocation", "latitude: %f longitude: %f", latitude, longitude);
-        if(latitude == 40.669000) {
-            // same as default 770 location. we change some digits so it shouldn't
-            // trigger the auto location detection feature. See LocationExtras::onBoot()
-            ESP_LOGD("revertToDefaultLocation", "same as default 770 location");
-            id(latitude_number).publish_state(40.668888f);
-            id(location_info).publish_state("Using 770 location");
-        } else {
-            ESP_LOGD("revertToDefaultLocation", "using exact coded latitude");
-            id(latitude_number).publish_state(latitude);
-            id(location_info).publish_state("Using coded location");
-        }
-        id(longitude_number).publish_state(longitude);
     }
 
     // ---------------------------------------- On Sequences ----------------------------------------

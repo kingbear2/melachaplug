@@ -46,6 +46,7 @@ time:
         - globals.set: 
             id: time_valid
             value: 'true'
+        - lambda: 'id(internet_status).publish_state("Connected - Time Synced");'
         - lambda: 'MelachaPlug::runMelachaChecks();'
     on_time:
       # Run every minute
@@ -178,6 +179,26 @@ text_sensor:
     format: "%a, %b %e, %l:%M %p"
     update_interval: never
     elevation: ${deg_tzeit}°
+  - platform: template
+    name: 06a Current Timezone
+    id: current_timezone
+    internal: true
+    update_interval: never
+  - platform: template
+    name: 07a Next Relay ON Time
+    id: next_relay_on_time
+    internal: true
+    update_interval: never
+  - platform: template
+    name: 07b Next Relay OFF Time
+    id: next_relay_off_time
+    internal: true
+    update_interval: never
+  - platform: template
+    name: 08a Internet Status
+    id: internet_status
+    internal: true
+    update_interval: never
 
 number:
   - platform: template
@@ -238,9 +259,67 @@ button:
     name: 10 Set To Alter Rebbe Zmanim
     on_press:
       - lambda: 'MelachaPlug::setAlterRebbeZmanim();'
+  - platform: template
+    name: 10b Set To R Moshe Feinstein Zmanim
+    on_press:
+      - lambda: 'MelachaPlug::setRabbiMosheZmanim();'
 
 sensor:
   - platform: sun
     name: 11 Sun Elevation
     type: elevation
     internal: true
+
+# Selectable timezone presets
+select:
+  - platform: template
+    name: 06b Set Timezone
+    id: timezone_select
+    optimistic: true
+    restore_value: true
+    initial_option: Auto-Detect
+    options:
+      - "Auto-Detect"
+      - "Eastern (EST/EDT)"
+      - "Central (CST/CDT)"
+      - "Mountain (MST/MDT)"
+      - "Mountain - No DST (Arizona)"
+      - "Pacific (PST/PDT)"
+      - "Alaska (AKST/AKDT)"
+      - "Hawaii - No DST (HST)"
+      - "Indiana - No DST (EST)"
+      - "Israel (IST/IDT)"
+      - "UK (GMT/BST)"
+      - "Central Europe (CET/CEST)"
+    on_value:
+      then:
+        - lambda: |-
+            std::string opt = x;
+            if (opt == "Auto-Detect") {
+              LocationExtras::detectLocation();
+            } else if (opt == "Eastern (EST/EDT)") {
+              applyTimezone("EST5EDT,M3.2.0,M11.1.0");
+            } else if (opt == "Central (CST/CDT)") {
+              applyTimezone("CST6CDT,M3.2.0,M11.1.0");
+            } else if (opt == "Mountain (MST/MDT)") {
+              applyTimezone("MST7MDT,M3.2.0,M11.1.0");
+            } else if (opt == "Mountain - No DST (Arizona)") {
+              applyTimezone("MST7");
+            } else if (opt == "Pacific (PST/PDT)") {
+              applyTimezone("PST8PDT,M3.2.0,M11.1.0");
+            } else if (opt == "Alaska (AKST/AKDT)") {
+              applyTimezone("AKST9AKDT,M3.2.0,M11.1.0");
+            } else if (opt == "Hawaii - No DST (HST)") {
+              applyTimezone("HST10");
+            } else if (opt == "Indiana - No DST (EST)") {
+              applyTimezone("EST5");
+            } else if (opt == "Israel (IST/IDT)") {
+              applyTimezone("IST-2IDT,M3.4.4,M10.4.4");
+            } else if (opt == "UK (GMT/BST)") {
+              applyTimezone("GMT0BST,M3.5.0,M10.5.0");
+            } else if (opt == "Central Europe (CET/CEST)") {
+              applyTimezone("CET-1CEST,M3.5.0,M10.5.0");
+            }
+            if (opt != "Auto-Detect") {
+              id(sntp_time).update();
+            }
