@@ -15,8 +15,11 @@ or connect to: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 
 #pragma once
 
-//#include "../config/esphome/header-files/hebrewcalender_melachaplug.h"
 #include "esphome.h"
+// Include the Hebrew calendar engine (adapted from libzmanim by Y Paritcher)
+// Defines: hdate struct, convertDate(), isassurbemelachah(), hdateaddday(), getyomtov(), etc.
+#include "hebrewcalender_melachaplug.h"
+
 using namespace esphome;
 using namespace time;
 
@@ -210,6 +213,14 @@ namespace MelachaPlug  {
         }
     }
 
+    // Forward declarations for new functions
+    void updateNextToggleTimes();
+    time_t getShabbosStartTime(hdate &hd);
+    time_t getNextShabbosStartTime(hdate &hd);
+    time_t getNextShabbosEndTime(hdate &hd);
+    time_t getShabbosEndTime(hdate &hd);
+    time_t getPlagTimeForDate(esphome::ESPTime &date);
+
     // ---------------------------------------- On Sequences ----------------------------------------
     void runMelachaChecks() {
         ESP_LOGD("runMelachaChecks", "runMelachaChecks ran");
@@ -239,7 +250,6 @@ namespace MelachaPlug  {
 
         if (currently_assur) {
             // Currently Shabbos/Yom Tov
-            // Next OFF (relay off) is right now (or was at shabbos start)
             // Next ON (relay on) is when Shabbos ends
             next_on = MelachaPlug::getNextShabbosEndTime(temp_hdate);
             // Find next Shabbos start after that for next OFF
@@ -276,10 +286,8 @@ namespace MelachaPlug  {
 
     time_t getShabbosStartTime(hdate &hd) {
         // Get sunset time for the start of Shabbos/Yom Tov for this hdate
-        esphome::ESPTime date = id(sntp_time).now();
-        // Convert hdate to gregorian to get the right date
         struct tm greg = hdategregorian(hd);
-        date.set_datetime(greg);
+        esphome::ESPTime date = esphome::ESPTime::from_epoch_local(mktime(&greg));
         date.hour = date.minute = date.second = 0;
         date.recalc_timestamp_utc();
 
@@ -401,13 +409,22 @@ void applyTimezone(const std::string &tz_posix) {
 namespace LocationExtras  {
 
     void detectLocation() {
-        WiFiClient wifiClient;
-        HTTPClient http;
-        http.begin(wifiClient, "http://ip-api.com/json/?fields=status,regionName,city,zip,lat,lon,timezone"); // API from http://ip-api.com/
-        int httpResponseCode = http.GET();
-        std::string payload = http.getString().c_str();
+        auto container = id(http_comp).get("http://ip-api.com/json/?fields=status,regionName,city,zip,lat,lon,timezone");
+        if (container == nullptr) {
+            ESP_LOGE("detectLocation", "HTTP request failed");
+            id(location_info).publish_state("Failed to get location");
+            return;
+        }
+
+        std::string payload;
+        uint8_t buf[512];
+        int bytes_read;
+        while ((bytes_read = container->read(buf, sizeof(buf))) > 0) {
+            payload.append((char *)buf, bytes_read);
+        }
+        container->end();
+
         ESP_LOGD("detectLocation", "Current Location: %s", payload.c_str());
-        http.end();
 
         std::string status = jsonGetString(payload, "status");
 
