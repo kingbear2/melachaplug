@@ -1,0 +1,124 @@
+# Athom PG03V3-US16A hardware binding
+# ESP32-C3, HLW8032 energy monitor, 16A relay
+
+# Energy monitoring via CSE7766/HLW8032 UART
+uart:
+  rx_pin: GPIO20
+  baud_rate: 4800
+  data_bits: 8
+  stop_bits: 1
+  parity: EVEN
+
+sensor:
+  - platform: cse7766
+    id: athom_power_monitor
+    current:
+      id: athom_current
+      name: "32 Current"
+      filters:
+        - throttle_average: 10s
+    voltage:
+      id: athom_voltage
+      name: "33 Voltage"
+      filters:
+        - throttle_average: 10s
+    power:
+      id: athom_power
+      name: "34 Active Power"
+      filters:
+        - throttle_average: 10s
+    energy:
+      id: athom_energy
+      name: "35 Energy"
+      unit_of_measurement: kWh
+      filters:
+        - throttle: 10s
+        - multiply: 0.001
+
+switch:
+  - platform: gpio
+    name: 20 Relay 1
+    id: relay_1
+    pin:
+      number: GPIO5
+    restore_mode: ${relay_restore_mode}
+    on_turn_on:
+      then:
+        - switch.turn_on: built_in_led
+    on_turn_off:
+      then:
+        - switch.turn_off: built_in_led
+
+  # Button lock switch (template, not GPIO output)
+  - platform: template
+    name: 21 Enable Button 1
+    id: enable_button_1
+    internal: true
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+
+  # LED flash preset
+  - platform: template
+    name: 22 Flash LED
+    id: flash_led
+    disabled_by_default: true
+    optimistic: yes
+    restore_mode: DISABLED
+    on_turn_on:
+      - while:
+          condition:
+            switch.is_on: flash_led
+          then:
+            - switch.turn_on: built_in_led
+            - delay: 75ms
+            - switch.turn_off: built_in_led
+            - delay: 75ms
+            - switch.turn_on: built_in_led
+            - delay: 75ms
+            - switch.turn_off: built_in_led
+            - delay: 2875ms
+    on_turn_off:
+      - switch.turn_off: built_in_led
+
+  - platform: gpio
+    name: 23 Built-in LED
+    disabled_by_default: true
+    id: built_in_led
+    pin:
+      number: GPIO6
+    restore_mode: ${relay_restore_mode}
+    inverted: ${led_inverted}
+
+binary_sensor:
+  - platform: gpio
+    id: button_1
+    pin:
+      number: ${button_1_gpio}
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on: 10ms
+    on_click:
+      - min_length: 10ms
+        max_length: 350ms
+        then:
+          - lambda: |-
+              static uint32_t last_click = 0;
+              static int count = 0;
+              uint32_t now = millis();
+              if (now - last_click < 2000) { count++; } else { count = 1; }
+              last_click = now;
+              if (count >= 3) {
+                id(inverted_shabbos_mode).toggle();
+                count = 0;
+                for (int i = 0; i < 3; i++) {
+                  id(built_in_led).turn_on(); delay(150);
+                  id(built_in_led).turn_off(); delay(150);
+                }
+              } else if (count == 1) {
+                delay(500);
+                if (count == 1) {
+                  id(relay_1).toggle();
+                  count = 0;
+                }
+              }

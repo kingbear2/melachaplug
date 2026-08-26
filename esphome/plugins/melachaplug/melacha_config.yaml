@@ -8,10 +8,15 @@ esphome:
   project:
     name: chabad-source.melachaplug
     version: "2025.09.02.0"
+  includes:
+    - header-files/ntp_config_melachaplug.h
   on_boot:
     - priority: 800                      # This is where all hardware initialization of vital components is executed
       then:
         - switch.turn_on: shabbos_mode
+    - priority: 600
+      then:
+        - lambda: 'MelachaPlugNTP::configureFromSaved();'
 
 # frequency of data flushed to the flash
 preferences:
@@ -20,6 +25,13 @@ preferences:
 # Enable Over The Air updates
 ota:
   - platform: esphome
+    password: "melachaplug"
+
+# Boot-loop recovery without opening the device
+safe_mode:
+  num_attempts: 3
+  boot_is_good_after: 2min
+  reboot_timeout: 30min
 
 # Enable fallback hotspot
 captive_portal:
@@ -28,12 +40,16 @@ wifi:
   # Configure fallback hotspot (captive portal) in case wifi connection fails
   ap:
     ssid: "${friendly_name} Fallback"
-    password: ""                  # password of fallback hotspot
+    password: "melachaplug"
 
-# Enable Web Interface
+# Enable Web Interface (embedded assets — works without internet)
 web_server:
   port: 80
   include_internal: true
+  version: 2
+  js_include: web_assets/www-v2.js
+  js_url: ""
+  css_url: ""
 
 time:
   - platform: sntp
@@ -117,6 +133,17 @@ switch:
       then:
         - logger.log: --------- on_turn_off inverted_shabbos_mode ---------"
         - lambda: 'MelachaPlug::runMelachaChecks();'
+  - platform: template
+    name: 27 Local NTP First
+    id: local_ntp_first
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      then:
+        - lambda: 'MelachaPlugNTP::configureFromSaved();'
+    on_turn_off:
+      then:
+        - lambda: 'MelachaPlugNTP::configureFromSaved();'
 
   # Shabbos mode switch - here is where we set what happens when it turns on and off
   - platform: template
@@ -209,7 +236,7 @@ number:
     id: min_offset_end
     optimistic: true
     min_value: -120
-    max_value: 120
+    max_value: 180
     step: 0
     mode: box
     restore_value: true
@@ -234,7 +261,7 @@ number:
     name: 09 Degree Shabbos Ends
     id: deg_shabbos_ends
     optimistic: true
-    min_value: -5.000
+    min_value: -20.000
     max_value: 30.000
     step: .001
     mode: box
@@ -243,6 +270,55 @@ number:
     on_value:
       - logger.log: --------- on deg_shabbos_ends ---------"
       - lambda: 'MelachaPlug::runMelachaChecks();'
+  # Local NTP server IP fields (for offline time sync from local router)
+  - platform: template
+    name: 28 Local NTP IP 1
+    id: local_ntp_ip_1
+    optimistic: true
+    min_value: 0
+    max_value: 255
+    step: 1
+    mode: box
+    restore_value: true
+    initial_value: 0
+    on_value:
+      - lambda: 'MelachaPlugNTP::configureFromSaved();'
+  - platform: template
+    name: 29 Local NTP IP 2
+    id: local_ntp_ip_2
+    optimistic: true
+    min_value: 0
+    max_value: 255
+    step: 1
+    mode: box
+    restore_value: true
+    initial_value: 0
+    on_value:
+      - lambda: 'MelachaPlugNTP::configureFromSaved();'
+  - platform: template
+    name: 30 Local NTP IP 3
+    id: local_ntp_ip_3
+    optimistic: true
+    min_value: 0
+    max_value: 255
+    step: 1
+    mode: box
+    restore_value: true
+    initial_value: 0
+    on_value:
+      - lambda: 'MelachaPlugNTP::configureFromSaved();'
+  - platform: template
+    name: 31 Local NTP IP 4
+    id: local_ntp_ip_4
+    optimistic: true
+    min_value: 0
+    max_value: 255
+    step: 1
+    mode: box
+    restore_value: true
+    initial_value: 0
+    on_value:
+      - lambda: 'MelachaPlugNTP::configureFromSaved();'
 
 button:
   - platform: template
