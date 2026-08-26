@@ -185,16 +185,6 @@ text_sensor:
     internal: true
     update_interval: never
   - platform: template
-    name: 07a Next Relay ON Time
-    id: next_relay_on_time
-    internal: true
-    update_interval: never
-  - platform: template
-    name: 07b Next Relay OFF Time
-    id: next_relay_off_time
-    internal: true
-    update_interval: never
-  - platform: template
     name: 08a Internet Status
     id: internet_status
     internal: true
@@ -270,7 +260,6 @@ sensor:
     type: elevation
     internal: true
 
-# Selectable timezone presets
 select:
   - platform: template
     name: 06b Set Timezone
