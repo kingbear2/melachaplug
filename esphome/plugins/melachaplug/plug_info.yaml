@@ -65,7 +65,7 @@ binary_sensor:
       number: ${button_1_gpio}
       mode: INPUT_PULLUP
       allow_other_uses: true
-    inverted: true
+      inverted: true
     filters:
       - delayed_on: 10ms
     on_click:
