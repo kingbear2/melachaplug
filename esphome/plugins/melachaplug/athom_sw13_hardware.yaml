@@ -1,0 +1,112 @@
+# Athom SW13C3 1-gang wall switch hardware binding
+# ESP32-C3, relay on GPIO5, button on GPIO20, red status LED on GPIO9
+# Button LED on GPIO3 (PWM-capable, used for Shabbos flash pattern)
+
+output:
+  # Button LED (PWM via LEDC — dimmable, used for Shabbos flash pattern)
+  - platform: ledc
+    pin: GPIO3
+    inverted: true
+    id: button_led_pwm
+
+light:
+  # Button LED as a dimmable light
+  - platform: monochromatic
+    id: button_led_light
+    output: button_led_pwm
+    internal: true
+    default_transition_length: 0ms
+
+switch:
+  - platform: gpio
+    name: 20 Relay 1
+    id: relay_1
+    pin:
+      number: GPIO5
+    restore_mode: ${relay_restore_mode}
+    on_turn_on:
+      then:
+        - light.turn_on: button_led_light
+    on_turn_off:
+      then:
+        - light.turn_off: button_led_light
+
+  # Button lock switch (template — disables physical button during Shabbos)
+  - platform: template
+    name: 21 Enable Button 1
+    id: enable_button_1
+    internal: true
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+
+  # LED flash preset — uses the red status LED for Shabbos indication
+  - platform: template
+    name: 22 Flash LED
+    id: flash_led
+    disabled_by_default: true
+    optimistic: yes
+    restore_mode: DISABLED
+    on_turn_on:
+      - while:
+          condition:
+            switch.is_on: flash_led
+          then:
+            - switch.turn_on: built_in_led
+            - delay: 75ms
+            - switch.turn_off: built_in_led
+            - delay: 75ms
+            - switch.turn_on: built_in_led
+            - delay: 75ms
+            - switch.turn_off: built_in_led
+            - delay: 2875ms
+    on_turn_off:
+      - switch.turn_off: built_in_led
+
+  # Red status LED
+  - platform: gpio
+    name: 23 Built-in LED
+    disabled_by_default: true
+    id: built_in_led
+    pin:
+      number: GPIO9
+    restore_mode: ${relay_restore_mode}
+    inverted: ${led_inverted}
+
+binary_sensor:
+  - platform: gpio
+    id: button_1
+    pin:
+      number: ${button_1_gpio}
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on: 10ms
+    on_click:
+      - min_length: 10ms
+        max_length: 350ms
+        then:
+          - lambda: |-
+              static uint32_t last_click = 0;
+              static int count = 0;
+              uint32_t now = millis();
+              if (now - last_click < 2000) { count++; } else { count = 1; }
+              last_click = now;
+              if (count >= 3) {
+                id(inverted_shabbos_mode).toggle();
+                count = 0;
+                for (int i = 0; i < 3; i++) {
+                  id(built_in_led).turn_on(); delay(150);
+                  id(built_in_led).turn_off(); delay(150);
+                }
+              } else if (count == 1) {
+                delay(500);
+                if (count == 1) {
+                  id(relay_1).toggle();
+                  count = 0;
+                }
+              }
+      # Long press (4+ seconds) — factory reset
+      - min_length: 4s
+        max_length: 10s
+        then:
+          - button.press: restart
